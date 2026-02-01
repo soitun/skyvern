@@ -1,0 +1,97 @@
+name: Claude Code Review
+on:
+  pull_request:
+    types: [opened, synchronize]
+jobs:
+  claude-review:
+    # Only auto-review PRs from external contributors (not maintainers)
+    # This helps community contributors get quick feedback while saving costs
+    if: |
+      github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR' ||
+      github.event.pull_request.author_association == 'FIRST_TIMER' ||
+      github.event.pull_request.author_association == 'NONE'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Delete previous Claude review comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find and delete any existing Claude Code review comments (identified by marker)
+          gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --jq '.[] | select(.body | contains("<!-- claude-code-review -->")) | .id' | \
+          while read -r id; do
+            if [ -n "$id" ]; then
+              echo "Deleting previous Claude review comment: $id"
+              gh api repos/${{ github.repository }}/issues/comments/$id -X DELETE
+            fi
+          done
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Please review this pull request and provide feedback on:
+            - Code quality and best practices
+            - Potential bugs or issues
+            - Performance considerations
+            - Security concerns
+            - Test coverage
+
+            Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+
+            IMPORTANT - Keep your review comment concise and scannable:
+            - Start with a brief 1-2 sentence summary of the overall PR quality
+            - Use collapsible sections for detailed feedback using GitHub's <details> and <summary> tags
+            - Group related feedback into categories (e.g., "Code Quality", "Potential Issues", "Suggestions")
+            - Only expand critical issues by default; keep minor suggestions collapsed
+
+            Example format for your comment:
+            ```
+            <!-- claude-code-review -->
+            ## Summary
+            Brief overall assessment here.
+
+            <details>
+            <summary>🔴 Critical Issues (X items)</summary>
+
+            - Issue 1 details...
+            - Issue 2 details...
+
+            </details>
+
+            <details>
+            <summary>🟡 Suggestions (X items)</summary>
+
+            - Suggestion 1...
+            - Suggestion 2...
+
+            </details>
+
+            <details>
+            <summary>📝 Minor/Style Notes (X items)</summary>
+
+            - Note 1...
+            - Note 2...
+
+            </details>
+            ```
+
+            IMPORTANT: Start your comment with the exact marker `<!-- claude-code-review -->` on the first line. This allows previous reviews to be replaced on subsequent commits.
+
+            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://code.claude.com/docs/en/cli-reference for available options
+          claude_args: '--allowed-tools "Read,Glob,Grep,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
